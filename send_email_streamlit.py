@@ -80,7 +80,7 @@ def send_emails(settings, data):
                 
                 for index, row in data.iterrows():
                     try:
-                        msg = MIMEMultipart('alternative') if settings['type'] == "HTML with Images" else EmailMessage()
+                        msg = MIMEMultipart('alternative')
                         msg['From'] = settings['email']
                         msg['To'] = row['Email']
                         msg['Subject'] = settings['subject']
@@ -88,15 +88,42 @@ def send_emails(settings, data):
                         if settings['type'] == "HTML with Images":
                             html_content = f"""
                             <html>
+                                <head>
+                                    <style>
+                                        .email-container {{
+                                            max-width: 1920px;
+                                            margin: 0 auto;
+                                        }}
+                                        .hero-image {{
+                                            width: 100%;
+                                            max-width: 1920px;
+                                            height: auto;
+                                            aspect-ratio: 16/9;
+                                            object-fit: cover;
+                                        }}
+                                        .content {{
+                                            padding: 20px;
+                                            font-family: Arial, sans-serif;
+                                        }}
+                                    </style>
+                                </head>
                                 <body>
-                                    <img src="{settings['image_url']}" alt="Header Image" width="600" height="auto">
-                                    {settings['body'].format(name=row['Name'])}
+                                    <div class="email-container">
+                                        <img src="{settings['image_url']}" 
+                                                alt="Header Image" 
+                                                class="hero-image"
+                                                width="1920"
+                                                height="1080">
+                                        <div class="content">
+                                            {settings['body'].format(name=row['Name'])}
+                                        </div>
+                                    </div>
                                 </body>
                             </html>
                             """
                             msg.attach(MIMEText(html_content, 'html'))
                         else:
-                            msg.set_content(settings['body'].format(name=row['Name']))
+                            msg.attach(MIMEText(settings['body'].format(name=row['Name']), 'plain'))
                         
                         server.send_message(msg)
                         progress_bar.progress((index + 1) / total_emails)
