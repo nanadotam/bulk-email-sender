@@ -6,16 +6,31 @@ import os
 from dotenv import load_dotenv
 import logging
 from datetime import datetime
-import requests
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
+from email.mime.application import MIMEApplication
+from jinja2 import Template
+
+# Create logs directory if it doesn't exist
+if not os.path.exists('logs'):
+    os.makedirs('logs')
+
+# Configure logging
+log_filename = f'logs/email_sender_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_filename),
+        logging.StreamHandler()
+    ]
+)
 
 def initialize_app():
     st.set_page_config(page_title="Email Sender App", layout="wide")
     st.title("📧 Bulk Email Sender")
     
-    if 'email_type' not in st.session_state:
-        st.session_state.email_type = 'regular'
     if 'preview_data' not in st.session_state:
         st.session_state.preview_data = None
 
@@ -24,51 +39,156 @@ def upload_csv():
     if uploaded_file is not None:
         try:
             df = pd.read_csv(uploaded_file)
+            required_columns = ['Nominator Email(CC)', 'Nominee Email', 'Name of Nominee', 'PDFPath']
+            if not all(col in df.columns for col in required_columns):
+                st.error(f"CSV must contain columns: {', '.join(required_columns)}")
+                return None
+            
+            # Store data in session state but don't preview here
             st.session_state.preview_data = df
             return df
         except Exception as e:
             st.error(f"Error reading CSV: {str(e)}")
+            logging.error(f"CSV upload error: {str(e)}")
     return None
-
-def preview_data():
-    if st.session_state.preview_data is not None:
-        st.subheader("CSV Preview")
-        st.dataframe(st.session_state.preview_data.head())
 
 def email_settings():
     with st.expander("Email Settings", expanded=True):
+        st.subheader("Email Header Image")
+        uploaded_header = st.file_uploader("Upload header image", type=['png', 'jpg', 'jpeg'])
+        if uploaded_header:
+            st.session_state.header_image_data = uploaded_header.getvalue()
+            st.image(uploaded_header, caption="Preview of header image", width=600)
+        else:
+            st.warning("Please upload a header image")
+            return None
+        
         col1, col2 = st.columns(2)
         with col1:
             email = st.text_input("Your Email Address", key="email")
         with col2:
             password = st.text_input("Email Password", type="password", key="password")
         
-        email_type = st.radio(
-            "Select Email Type",
-            ["Regular Text", "HTML with Images"],
-            key="email_type"
-        )
+        subject = st.text_input("Email Subject", value="Caught Being Good Nomination!")
         
-        subject = st.text_input("Email Subject")
-        if email_type == "Regular Text":
-            body = st.text_area("Email Body (Use {name} for recipient's name)")
-        else:
-            body = st.text_area("HTML Body (Use {name} for recipient's name)")
-            image_url = st.text_input("Image URL (ImgBB or other hosted image)")
+        # Create a sample preview using the template
+        sample_name = "Sample Recipient"
         
+        # Create HTML content with proper escaping of curly braces for CSS
+        template_content = """<!DOCTYPE html>
+<html>
+    <head>
+        <style>
+            .email-container {{
+                max-width: 600px;
+                margin: 0 auto;
+                font-family: Arial, sans-serif;
+                padding: 20px;
+                background-color: #ffffff;
+            }}
+            .hero-image {{
+                width: 100%;
+                max-width: 600px;
+                height: auto;
+                aspect-ratio: 3/1;
+                object-fit: cover;
+                margin-bottom: 30px;
+            }}
+            .content {{
+                padding: 25px;
+                line-height: 1.8;
+                color: #333;
+                background-color: #ffffff;
+            }}
+            .greeting {{
+                font-size: 20px;
+                margin-bottom: 25px;
+                font-weight: 500;
+            }}
+            .message {{
+                margin-bottom: 25px;
+                font-size: 16px;
+            }}
+            .signature {{
+                margin-top: 35px;
+                padding-top: 20px;
+                border-top: 1px solid #eee;
+                font-style: italic;
+                color: #555;
+            }}
+        </style>
+    </head>
+    <body style="background-color: #f5f5f5; margin: 0; padding: 20px;">
+        <div class="email-container">
+            <img src="cid:header_image" 
+                 alt="Header Image" 
+                 class="hero-image"
+                 width="600"
+                 height="200">
+            <div class="content">
+                <div class="greeting">Dear {name} 🤩,</div>
+                <div class="message">
+                    Congratulations on being recognized as a Caught Being Good nominee! 🎉 Your actions and dedication to making Ashesi a better community have not gone unnoticed, and we are so proud of you. 🎉🤩
+                </div>
+                <div class="message">
+                    This attached certificate is a small token of appreciation for the kindness, leadership, and positive impact you continue to share with those around you. You inspire us all to do better and be better. 🤗❤️
+                </div>
+                <div class="message">
+                    Keep shining your light and making a difference; you are truly appreciated!
+                </div>
+                <div class="signature">
+                    Yours Sincerely,<br>
+                    <strong>The SLE Team</strong>
+                </div>
+            </div>
+        </div>
+    </body>
+</html>"""
+
+        # Add preview section
+        st.subheader("Email Preview")
+        if st.session_state.get('header_image_data'):
+            st.image(st.session_state.header_image_data, caption="Header Image Preview", width=600)
+        
+        # Format the template with the sample name
+        preview_html = template_content.format(name=sample_name)
+        
+        # Display the formatted content in a container with custom CSS
+        st.markdown("""
+        <style>
+        .email-preview {
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 20px;
+            margin: 10px 0;
+            background-color: white;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("<div class='email-preview'>", unsafe_allow_html=True)
+        st.markdown(preview_html, unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+        
+        # Add a note about the preview
+        st.info("👆 This is how your email will appear to recipients. The actual email will include the uploaded header image and personalized name.")
+
         return {
             'email': email,
             'password': password,
             'subject': subject,
-            'body': body,
-            'type': email_type,
-            'image_url': image_url if email_type == "HTML with Images" else None
+            'template': template_content,
+            'header_image_data': st.session_state.get('header_image_data') if 'header_image_data' in st.session_state else None
         }
 
 def send_emails(settings, data):
     try:
         smtp_server = 'smtp.office365.com'
         smtp_port = 587
+        logging.info(f"Attempting to connect to SMTP server: {smtp_server}:{smtp_port}")
+        
+        if not settings.get('header_image_data'):
+            raise ValueError("Header image is required")
         
         with st.spinner('Sending emails...'):
             progress_bar = st.progress(0)
@@ -76,66 +196,88 @@ def send_emails(settings, data):
             
             with smtplib.SMTP(smtp_server, smtp_port) as server:
                 server.starttls()
+                logging.info("TLS connection established")
+                
                 server.login(settings['email'], settings['password'])
+                logging.info("Successfully logged into SMTP server")
                 
                 for index, row in data.iterrows():
                     try:
-                        msg = MIMEMultipart('alternative')
+                        msg = MIMEMultipart('related')
                         msg['From'] = settings['email']
-                        msg['To'] = row['Email']
+                        msg['To'] = row['Nominee Email']
+                        
+                        # Handle CC recipients
+                        cc_email = row['Nominator Email(CC)']
+                        if pd.notna(cc_email) and isinstance(cc_email, str) and '@' in cc_email:
+                            msg['Cc'] = cc_email.strip()  # Remove any extra whitespace
+                            all_recipients = [row['Nominee Email'], cc_email.strip()]
+                            logging.info(f"Added CC recipient: {cc_email}")
+                        else:
+                            all_recipients = [row['Nominee Email']]
+                            logging.warning(f"No valid CC email for nominee: {row['Name of Nominee']}")
+                        
                         msg['Subject'] = settings['subject']
                         
-                        if settings['type'] == "HTML with Images":
-                            html_content = f"""
-                            <html>
-                                <head>
-                                    <style>
-                                        .email-container {{
-                                            max-width: 1920px;
-                                            margin: 0 auto;
-                                        }}
-                                        .hero-image {{
-                                            width: 100%;
-                                            max-width: 1920px;
-                                            height: auto;
-                                            aspect-ratio: 16/9;
-                                            object-fit: cover;
-                                        }}
-                                        .content {{
-                                            padding: 20px;
-                                            font-family: Arial, sans-serif;
-                                        }}
-                                    </style>
-                                </head>
-                                <body>
-                                    <div class="email-container">
-                                        <img src="{settings['image_url']}" 
-                                                alt="Header Image" 
-                                                class="hero-image"
-                                                width="1920"
-                                                height="1080">
-                                        <div class="content">
-                                            {settings['body'].format(name=row['Name'])}
-                                        </div>
-                                    </div>
-                                </body>
-                            </html>
-                            """
-                            msg.attach(MIMEText(html_content, 'html'))
-                        else:
-                            msg.attach(MIMEText(settings['body'].format(name=row['Name']), 'plain'))
+                        logging.info(f"Processing email for: {row['Nominee Email']}")
                         
-                        server.send_message(msg)
+                        # Create alternative part for HTML
+                        alt_part = MIMEMultipart('alternative')
+                        msg.attach(alt_part)
+                        
+                        # HTML Content
+                        html_content = settings['template'].format(
+                            image_url="cid:header_image",
+                            name=row['Name of Nominee']
+                        )
+                        html_part = MIMEText(html_content, 'html')
+                        alt_part.attach(html_part)
+                        
+                        # Attach header image
+                        image = MIMEImage(settings['header_image_data'])
+                        image.add_header('Content-ID', '<header_image>')
+                        image.add_header('Content-Disposition', 'inline')
+                        msg.attach(image)
+                        logging.info("Header image attached successfully")
+                        
+                        # Attach PDF
+                        if os.path.exists(row['PDFPath']):
+                            with open(row['PDFPath'], 'rb') as pdf:
+                                pdf_attachment = MIMEApplication(pdf.read(), _subtype='pdf')
+                                pdf_attachment.add_header(
+                                    'Content-Disposition', 
+                                    'attachment', 
+                                    filename=os.path.basename(row['PDFPath'])
+                                )
+                                msg.attach(pdf_attachment)
+                                logging.info(f"PDF attached successfully: {row['PDFPath']}")
+                        else:
+                            logging.warning(f"PDF path not found for {row['Nominee Email']}")
+                        
+                        # Send email to all recipients
+                        server.send_message(msg, to_addrs=all_recipients)
                         progress_bar.progress((index + 1) / total_emails)
                         
+                        # Log success with recipient details
+                        cc_info = f" with CC: {cc_email}" if 'Cc' in msg else ""
+                        logging.info(f"Email successfully sent to: {row['Nominee Email']}{cc_info}")
+                        
+                        # Show success in Streamlit
+                        st.write(f"✅ Sent to {row['Name of Nominee']} ({row['Nominee Email']}){cc_info}")
+                        
                     except Exception as e:
-                        st.error(f"Error sending to {row['Email']}: {str(e)}")
+                        error_msg = f"Error sending to {row['Nominee Email']}: {str(e)}"
+                        st.error(error_msg)
+                        logging.error(error_msg)
                         continue
                         
-        st.success("Emails sent successfully!")
+        st.success("All emails sent successfully!")
+        logging.info("Email sending process completed successfully")
         
     except Exception as e:
-        st.error(f"Error: {str(e)}")
+        error_msg = f"Error: {str(e)}"
+        st.error(error_msg)
+        logging.error(error_msg)
 
 def main():
     initialize_app()
@@ -161,11 +303,14 @@ def main():
     # Main app layout
     data = upload_csv()
     if data is not None:
-        preview_data()
+        # Show CSV preview only once
+        st.subheader("CSV Preview")
+        st.dataframe(data.head())
+        
         settings = email_settings()
         
         if st.button("Send Emails", type="primary"):
-            if not all([settings['email'], settings['password'], settings['subject'], settings['body']]):
+            if not all([settings['email'], settings['password'], settings['subject']]):
                 st.error("Please fill in all required fields")
             else:
                 send_emails(settings, data)
