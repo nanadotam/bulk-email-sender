@@ -39,7 +39,7 @@ def upload_csv():
     if uploaded_file is not None:
         try:
             df = pd.read_csv(uploaded_file)
-            required_columns = ['Nominator Email(CC)', 'Nominee Email', 'Name of Nominee', 'PDFPath']
+            required_columns = ['Nominator Email(CC)', 'Nominator Name', 'Nominee Email', 'Name of Nominee', 'PDFPath']
             if not all(col in df.columns for col in required_columns):
                 st.error(f"CSV must contain columns: {', '.join(required_columns)}")
                 return None
@@ -73,6 +73,7 @@ def email_settings():
         
         # Create a sample preview using the template
         sample_name = "Sample Recipient"
+        sample_nominator = "Sample Nominator"
         
         # Create HTML content with proper escaping of curly braces for CSS
         template_content = """<!DOCTYPE html>
@@ -128,7 +129,7 @@ def email_settings():
             <div class="content">
                 <div class="greeting">Dear {name} 🤩,</div>
                 <div class="message">
-                    Congratulations on being recognized as a Caught Being Good nominee! 🎉 Your actions and dedication to making Ashesi a better community have not gone unnoticed, and we are so proud of you. 🎉🤩
+                    Congratulations on being recognized as a Caught Being Good nominee! 🎉 Your actions and dedication to making Ashesi a better community have not gone unnoticed thanks to {nominator_name}, and we are so proud of you. 🎉🤩
                 </div>
                 <div class="message">
                     This attached certificate is a small token of appreciation for the kindness, leadership, and positive impact you continue to share with those around you. You inspire us all to do better and be better. 🤗❤️
@@ -150,8 +151,11 @@ def email_settings():
         if st.session_state.get('header_image_data'):
             st.image(st.session_state.header_image_data, caption="Header Image Preview", width=600)
         
-        # Format the template with the sample name
-        preview_html = template_content.format(name=sample_name)
+        # Format the template with both required parameters
+        preview_html = template_content.format(
+            name=sample_name,
+            nominator_name=sample_nominator
+        )
         
         # Display the formatted content in a container with custom CSS
         st.markdown("""
@@ -185,6 +189,7 @@ def send_emails(settings, data):
     try:
         smtp_server = 'smtp.office365.com'
         smtp_port = 587
+        SLE_EMAIL = 'sle@ashesi.edu.gh'  # Add constant
         logging.info(f"Attempting to connect to SMTP server: {smtp_server}:{smtp_port}")
         
         if not settings.get('header_image_data'):
@@ -207,15 +212,15 @@ def send_emails(settings, data):
                         msg['From'] = settings['email']
                         msg['To'] = row['Nominee Email']
                         
-                        # Handle CC recipients
-                        cc_email = row['Nominator Email(CC)']
-                        if pd.notna(cc_email) and isinstance(cc_email, str) and '@' in cc_email:
-                            msg['Cc'] = cc_email.strip()  # Remove any extra whitespace
-                            all_recipients = [row['Nominee Email'], cc_email.strip()]
-                            logging.info(f"Added CC recipient: {cc_email}")
-                        else:
-                            all_recipients = [row['Nominee Email']]
-                            logging.warning(f"No valid CC email for nominee: {row['Name of Nominee']}")
+                        # Handle CC recipients - now including SLE email
+                        cc_recipients = [SLE_EMAIL]  # Start with SLE email
+                        nominator_cc = row['Nominator Email(CC)']
+                        if pd.notna(nominator_cc) and isinstance(nominator_cc, str) and '@' in nominator_cc:
+                            cc_recipients.append(nominator_cc.strip())
+                        
+                        msg['Cc'] = ', '.join(cc_recipients)  # Join all CC recipients
+                        all_recipients = [row['Nominee Email']] + cc_recipients
+                        logging.info(f"CC recipients: {cc_recipients}")
                         
                         msg['Subject'] = settings['subject']
                         
@@ -228,7 +233,8 @@ def send_emails(settings, data):
                         # HTML Content
                         html_content = settings['template'].format(
                             image_url="cid:header_image",
-                            name=row['Name of Nominee']
+                            name=row['Name of Nominee'],
+                            nominator_name=row['Nominator Name']
                         )
                         html_part = MIMEText(html_content, 'html')
                         alt_part.attach(html_part)
@@ -241,29 +247,31 @@ def send_emails(settings, data):
                         logging.info("Header image attached successfully")
                         
                         # Attach PDF
-                        if os.path.exists(row['PDFPath']):
-                            with open(row['PDFPath'], 'rb') as pdf:
+                        pdf_path_with_extension = row['PDFPath'] + ".pdf"
+                        if os.path.exists(pdf_path_with_extension):
+                            with open(pdf_path_with_extension, 'rb') as pdf:
                                 pdf_attachment = MIMEApplication(pdf.read(), _subtype='pdf')
                                 pdf_attachment.add_header(
                                     'Content-Disposition', 
                                     'attachment', 
-                                    filename=os.path.basename(row['PDFPath'])
+                                    filename=os.path.basename(pdf_path_with_extension)
                                 )
                                 msg.attach(pdf_attachment)
-                                logging.info(f"PDF attached successfully: {row['PDFPath']}")
+                                logging.info(f"PDF attached successfully: {pdf_path_with_extension}")
                         else:
-                            logging.warning(f"PDF path not found for {row['Nominee Email']}")
+                            logging.warning(f"PDF path not found for {row['Nominee Email']}: {pdf_path_with_extension}")
+
                         
                         # Send email to all recipients
                         server.send_message(msg, to_addrs=all_recipients)
                         progress_bar.progress((index + 1) / total_emails)
                         
-                        # Log success with recipient details
-                        cc_info = f" with CC: {cc_email}" if 'Cc' in msg else ""
+                        # Log success with recipient details - using cc_recipients instead of cc_email
+                        cc_info = f" with CC: {', '.join(cc_recipients)}" if cc_recipients else ""
                         logging.info(f"Email successfully sent to: {row['Nominee Email']}{cc_info}")
                         
                         # Show success in Streamlit
-                        st.write(f"✅ Sent to {row['Name of Nominee']} ({row['Nominee Email']}){cc_info}")
+                        st.write(f"✅ Sent to {row['Name of Nominee']} ({row['Nominator Name']} - {row['Nominee Email']}){cc_info}")
                         
                     except Exception as e:
                         error_msg = f"Error sending to {row['Nominee Email']}: {str(e)}"
@@ -286,7 +294,7 @@ def main():
     with st.sidebar:
         st.header("Instructions")
         st.markdown("""
-        1. Upload your CSV file (must have 'Name' and 'Email' columns)
+        1. Upload your CSV file (must have 'Nominator Name', 'Nominator Email(CC)', 'Nominee Email', 'Name of Nominee', and 'PDFPath' columns)
         2. Enter your email credentials
         3. Choose email type and compose your message
         4. Preview the CSV data
@@ -296,8 +304,11 @@ def main():
         st.header("CSV Format")
         st.markdown("""
         Required columns:
-        - Name
-        - Email
+        - Nominator Name
+        - Nominator Email(CC)
+        - Nominee Email
+        - Name of Nominee
+        - PDFPath
         """)
     
     # Main app layout
